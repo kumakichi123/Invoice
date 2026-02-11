@@ -2,9 +2,9 @@ import Link from "next/link";
 import { missingLegalFieldLabels } from "@/lib/legal";
 
 const links = [
-  { href: "/legal/tokushoho", label: "特商法に基づく表記" },
-  { href: "/legal/privacy", label: "プライバシーポリシー" },
-  { href: "/legal/terms", label: "利用規約" },
+  { href: "/legal/notice", label: "Legal Notice" },
+  { href: "/legal/privacy", label: "Privacy Policy" },
+  { href: "/legal/terms", label: "Terms of Service" },
 ];
 
 export default function LegalLayout({
@@ -34,7 +34,7 @@ export default function LegalLayout({
           </div>
           {missingLegalFieldLabels.length > 0 ? (
             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              公開前に設定が必要な項目: {missingLegalFieldLabels.join(" / ")}
+              Before going live, fill required legal fields: {missingLegalFieldLabels.join(" / ")}
             </p>
           ) : null}
         </header>

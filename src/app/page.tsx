@@ -12,43 +12,45 @@ export default function Home() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="mono text-xs tracking-[0.2em] text-slate-700">INVOICEJP</p>
             <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
-              <Link href="/legal/tokushoho" className="underline underline-offset-4">特商法</Link>
-              <Link href="/legal/privacy" className="underline underline-offset-4">プライバシー</Link>
-              <Link href="/legal/terms" className="underline underline-offset-4">利用規約</Link>
+              <Link href="/legal/notice" className="underline underline-offset-4">Legal Notice</Link>
+              <Link href="/legal/privacy" className="underline underline-offset-4">Privacy</Link>
+              <Link href="/legal/terms" className="underline underline-offset-4">Terms</Link>
             </div>
           </div>
 
           <div className="mt-5 grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
             <div>
               <h1 className="text-4xl font-semibold leading-tight text-slate-900 md:text-6xl">
-                請求書をCSV化して
+                Convert Japanese invoices
                 <br />
-                経理処理を短縮
+                into clean CSV
               </h1>
               <p className="mt-4 max-w-2xl text-sm text-slate-700 md:text-base">
-                日本語の請求書PDF・画像をAIで抽出し、レビュー後にそのままCSVへ。
-                手入力の時間を削り、記帳や集計を安定化します。
+                Upload PDF or image invoices, extract key fields with AI, review quickly, and
+                export production-ready CSV files for your accounting workflow. Built with
+                Japanese invoice and bookkeeping context in mind.
               </p>
               <div className="mt-7 flex flex-col gap-3 sm:flex-row">
                 <Link
                   href="/dashboard"
                   className="rounded-xl bg-[color:var(--accent)] px-6 py-3 text-center text-sm font-semibold text-white transition hover:bg-[color:var(--accent-strong)]"
                 >
-                  無料で試す
+                  Start Free
                 </Link>
                 <Link
                   href="/login"
                   className="rounded-xl border border-slate-300 bg-white px-6 py-3 text-center text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
                 >
-                  ログイン
+                  Sign In
                 </Link>
               </div>
               <div className="mt-6 flex flex-wrap gap-2">
                 {[
                   "PDF / JPG / PNG",
-                  "1ファイル最大10MB",
-                  "最大20件を一括処理",
-                  "レビュー編集対応",
+                  "Up to 10MB per file",
+                  "Batch up to 20 files",
+                  "Review and edit before export",
+                  "Japan accounting context-aware",
                 ].map((item) => (
                   <span
                     key={item}
@@ -64,10 +66,10 @@ export default function Home() {
               <p className="mono text-xs tracking-[0.18em] text-slate-500">FLOW PREVIEW</p>
               <div className="mt-3 space-y-2">
                 {[
-                  "1. アップロード",
-                  "2. AI抽出",
-                  "3. 手動レビュー",
-                  "4. CSV出力",
+                  "1. Upload",
+                  "2. AI extraction",
+                  "3. Manual review",
+                  "4. CSV export",
                 ].map((step) => (
                   <div
                     key={step}
@@ -78,10 +80,10 @@ export default function Home() {
                 ))}
               </div>
               <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
-                <p className="text-xs text-slate-500">抽出フィールド例</p>
+                <p className="text-xs text-slate-500">Example extracted fields</p>
                 <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-700">
                   <dt>Vendor</dt>
-                  <dd className="text-right">ABC商事</dd>
+                  <dd className="text-right">ABC Trading Co.</dd>
                   <dt>Issue Date</dt>
                   <dd className="text-right">2026-02-10</dd>
                   <dt>Total</dt>
@@ -96,23 +98,23 @@ export default function Home() {
           <div className="grid gap-3 md:grid-cols-3">
             <article className="rounded-xl bg-white/75 px-4 py-4">
               <p className="mono text-xs text-slate-600">VALUE 01</p>
-              <p className="mt-2 text-xl font-semibold text-slate-900">入力作業を削減</p>
+              <p className="mt-2 text-xl font-semibold text-slate-900">Reduce Manual Entry</p>
               <p className="mt-2 text-sm text-slate-700">
-                請求書の主要項目を自動抽出し、転記ミスを減らします。
+                Auto-capture core invoice fields and cut down repetitive typing work.
               </p>
             </article>
             <article className="rounded-xl bg-white/75 px-4 py-4">
               <p className="mono text-xs text-slate-600">VALUE 02</p>
-              <p className="mt-2 text-xl font-semibold text-slate-900">レビュー前提で安心</p>
+              <p className="mt-2 text-xl font-semibold text-slate-900">Built for Review</p>
               <p className="mt-2 text-sm text-slate-700">
-                低信頼フィールドを確認し、確定前に手直しできます。
+                Validate extraction output and fix edge cases before committing data.
               </p>
             </article>
             <article className="rounded-xl bg-white/75 px-4 py-4">
               <p className="mono text-xs text-slate-600">VALUE 03</p>
-              <p className="mt-2 text-xl font-semibold text-slate-900">すぐに運用開始</p>
+              <p className="mt-2 text-xl font-semibold text-slate-900">Japan Accounting Context</p>
               <p className="mt-2 text-sm text-slate-700">
-                ブラウザだけで使えるため、導入コストを抑えられます。
+                Strong fit for Japanese bookkeeping practices, tax fields, and invoice wording.
               </p>
             </article>
           </div>
@@ -122,24 +124,24 @@ export default function Home() {
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="mono text-xs tracking-[0.18em] text-slate-600">PRICING</p>
-              <h2 className="mt-2 text-3xl font-semibold text-slate-900">シンプルな従量課金</h2>
+              <h2 className="mt-2 text-3xl font-semibold text-slate-900">Simple Subscription + Usage</h2>
             </div>
             <p className="text-sm text-slate-700">
-              月額プラン / 年額プラン / 超過従量の組み合わせ
+              Monthly or yearly base plan plus usage overage.
             </p>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-slate-800">月額</p>
+              <p className="text-sm font-semibold text-slate-800">Monthly</p>
               <p className="mt-2 text-2xl font-semibold">$29<span className="text-sm font-normal">/mo</span></p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-slate-800">年額</p>
+              <p className="text-sm font-semibold text-slate-800">Yearly</p>
               <p className="mt-2 text-2xl font-semibold">-20%</p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-slate-800">超過分</p>
-              <p className="mt-2 text-2xl font-semibold">$0.40<span className="text-sm font-normal">/件</span></p>
+              <p className="text-sm font-semibold text-slate-800">Overage</p>
+              <p className="mt-2 text-2xl font-semibold">$0.40<span className="text-sm font-normal">/file</span></p>
             </div>
           </div>
         </section>
@@ -148,9 +150,9 @@ export default function Home() {
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <p>InvoiceJP | Japanese Invoice to CSV</p>
             <div className="flex flex-wrap items-center gap-4">
-              <Link href="/legal/tokushoho" className="underline underline-offset-4">特商法に基づく表記</Link>
-              <Link href="/legal/privacy" className="underline underline-offset-4">プライバシーポリシー</Link>
-              <Link href="/legal/terms" className="underline underline-offset-4">利用規約</Link>
+              <Link href="/legal/notice" className="underline underline-offset-4">Legal Notice</Link>
+              <Link href="/legal/privacy" className="underline underline-offset-4">Privacy Policy</Link>
+              <Link href="/legal/terms" className="underline underline-offset-4">Terms of Service</Link>
             </div>
           </div>
         </footer>

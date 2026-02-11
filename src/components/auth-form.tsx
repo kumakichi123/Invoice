@@ -131,15 +131,15 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
         </div>
 
         <p className="mt-4 text-xs leading-5 text-slate-600">
-          {isLogin ? "ログインにより" : "アカウント作成により"}
+          {isLogin ? "By logging in, you agree to the" : "By creating an account, you agree to the"}
           <Link href="/legal/terms" className="mx-1 underline underline-offset-4">
-            利用規約
+            Terms of Service
           </Link>
-          と
+          and
           <Link href="/legal/privacy" className="mx-1 underline underline-offset-4">
-            プライバシーポリシー
+            Privacy Policy
           </Link>
-          に同意したものとみなされます。
+          .
         </p>
       </section>
     </main>

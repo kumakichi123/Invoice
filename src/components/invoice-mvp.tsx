@@ -693,14 +693,14 @@ export function InvoiceMvp({
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">InvoiceJP</h1>
               <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-600">
-                <Link href="/legal/tokushoho" className="underline underline-offset-4">
-                  特商法に基づく表記
+                <Link href="/legal/notice" className="underline underline-offset-4">
+                  Legal Notice
                 </Link>
                 <Link href="/legal/privacy" className="underline underline-offset-4">
-                  プライバシーポリシー
+                  Privacy Policy
                 </Link>
                 <Link href="/legal/terms" className="underline underline-offset-4">
-                  利用規約
+                  Terms of Service
                 </Link>
               </div>
             </div>

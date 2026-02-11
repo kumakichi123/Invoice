@@ -2,89 +2,89 @@ import type { Metadata } from "next";
 import { legalBusiness, legalLastUpdated } from "@/lib/legal";
 
 export const metadata: Metadata = {
-  title: "プライバシーポリシー | InvoiceJP",
-  description: "InvoiceJPのプライバシーポリシーです。",
+  title: "Privacy Policy | InvoiceJP",
+  description: "Privacy policy for InvoiceJP.",
 };
 
 export default function PrivacyPage() {
   return (
     <article className="space-y-5 text-sm leading-7 text-slate-800">
       <header>
-        <h1 className="text-2xl font-semibold text-slate-900">プライバシーポリシー</h1>
-        <p className="mt-2 text-xs text-slate-600">最終更新日: {legalLastUpdated}</p>
+        <h1 className="text-2xl font-semibold text-slate-900">Privacy Policy</h1>
+        <p className="mt-2 text-xs text-slate-600">Last updated: {legalLastUpdated}</p>
       </header>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">1. 取得する情報</h2>
+        <h2 className="text-base font-semibold text-slate-900">1. Information We Collect</h2>
         <p>
-          当社は、本サービスの提供にあたり、以下の情報を取得します。
-          アカウント情報（メールアドレス等）、請求書ファイル、抽出結果データ、決済関連情報、アクセスログ、
-          お問い合わせ内容。
+          We may collect account information (such as email address), uploaded invoice files,
+          extraction output data, billing and transaction records, usage logs, and support
+          inquiries.
         </p>
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">2. 利用目的</h2>
+        <h2 className="text-base font-semibold text-slate-900">2. How We Use Information</h2>
         <p>
-          取得情報は、本人確認、サービス提供、請求・決済処理、品質改善、不正利用防止、
-          お問い合わせ対応、法令対応のために利用します。
+          We use information to provide and improve the Service, process billing, authenticate
+          users, prevent abuse, respond to support requests, and comply with legal obligations.
         </p>
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">3. 第三者提供</h2>
+        <h2 className="text-base font-semibold text-slate-900">3. Sharing and Disclosure</h2>
         <p>
-          当社は、法令に基づく場合を除き、本人の同意なく個人データを第三者提供しません。
-          ただし、サービス提供に必要な範囲で外部委託先を利用します。
+          We do not sell personal data. We may share data with service providers that help us run
+          the Service, and when required by law, legal process, or to protect rights and security.
         </p>
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">4. 外部サービスの利用</h2>
+        <h2 className="text-base font-semibold text-slate-900">4. Service Providers</h2>
         <p>
-          当社は、インフラ・認証（Supabase）、決済（Stripe）、AI処理（Dify）、
-          メール配信（Resend）等の外部サービスを利用する場合があります。
-          委託先での取り扱いは各社の規約・ポリシーに従います。
+          We may rely on third-party providers such as Supabase (infrastructure and auth), Stripe
+          (payments), Dify (AI workflow processing), and Resend (email). Their handling of data is
+          governed by their own terms and policies.
         </p>
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">5. 国外移転</h2>
+        <h2 className="text-base font-semibold text-slate-900">5. International Transfers</h2>
         <p>
-          当社は、クラウドサービスの利用に伴い、個人データを日本国外で取り扱う場合があります。
-          法令に従い、適切な安全管理措置を講じます。
+          Your data may be processed in countries other than your own. We take reasonable measures
+          to protect personal data in line with applicable data protection laws.
         </p>
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">6. 安全管理措置</h2>
+        <h2 className="text-base font-semibold text-slate-900">6. Security</h2>
         <p>
-          当社は、アクセス制御、通信の暗号化、権限管理、委託先監督等の措置を講じ、
-          個人データの漏えい・滅失・毀損の防止に努めます。
+          We use administrative, technical, and organizational safeguards designed to protect
+          personal data from unauthorized access, loss, misuse, and alteration.
         </p>
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">7. 開示・訂正・利用停止等</h2>
+        <h2 className="text-base font-semibold text-slate-900">7. Your Rights</h2>
         <p>
-          保有個人データの開示、訂正、利用停止、削除等の請求は、下記窓口までご連絡ください。
-          本人確認のうえ、法令に基づき対応します。
+          Depending on your jurisdiction, you may have rights to access, correct, delete, or
+          restrict certain processing of your personal data. Contact us to submit a request.
         </p>
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">8. ポリシーの改定</h2>
+        <h2 className="text-base font-semibold text-slate-900">8. Policy Updates</h2>
         <p>
-          当社は、法令改正またはサービス内容の変更に応じて本ポリシーを改定することがあります。
-          重要な変更は本サイト上で告知します。
+          We may update this policy from time to time. Material changes will be posted on this
+          page with a revised update date.
         </p>
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-        <h2 className="text-base font-semibold text-slate-900">9. お問い合わせ窓口</h2>
-        <p>事業者名: {legalBusiness.businessName}</p>
-        <p>メール: {legalBusiness.email}</p>
-        <p>受付時間: {legalBusiness.supportHours}</p>
+        <h2 className="text-base font-semibold text-slate-900">9. Contact</h2>
+        <p>Business: {legalBusiness.businessName}</p>
+        <p>Email: {legalBusiness.email}</p>
+        <p>Support Hours: {legalBusiness.supportHours}</p>
       </section>
     </article>
   );
