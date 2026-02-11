@@ -144,13 +144,14 @@ export function normalizeInvoiceFields(input: unknown): InvoiceFields {
 }
 
 export function normalizeInvoiceConfidence(input: unknown): InvoiceFieldConfidence {
-  if (!isRecord(input)) {
+  const parsed = parseJsonIfString(input);
+  if (!isRecord(parsed)) {
     return {};
   }
 
   const output: InvoiceFieldConfidence = {};
   const sourceMap = new Map<string, unknown>();
-  for (const [key, value] of Object.entries(input)) {
+  for (const [key, value] of Object.entries(parsed)) {
     sourceMap.set(canonicalKey(key), value);
   }
 
@@ -158,8 +159,18 @@ export function normalizeInvoiceConfidence(input: unknown): InvoiceFieldConfiden
     keyof InvoiceFields
   >) {
     const aliases = FIELD_ALIASES[fieldName];
-    const foundValue = aliases
-      .map((alias) => sourceMap.get(canonicalKey(alias)))
+    const lookupKeys = new Set(
+      aliases.flatMap((alias) => [
+        canonicalKey(alias),
+        canonicalKey(`${alias}_confidence`),
+        canonicalKey(`${alias}confidence`),
+        canonicalKey(`${alias}_level`),
+        canonicalKey(`${alias}level`),
+      ]),
+    );
+
+    const foundValue = Array.from(lookupKeys)
+      .map((key) => sourceMap.get(key))
       .find((value) => value !== undefined && value !== null);
 
     const normalized = normalizeConfidenceValue(foundValue);
@@ -225,6 +236,39 @@ function normalizeFieldValue(fieldName: keyof InvoiceFields, value: unknown): st
 }
 
 function normalizeConfidenceValue(value: unknown): InvoiceConfidenceLevel | null {
+  if (isRecord(value)) {
+    const nested = firstDefined(
+      value.confidence,
+      value.level,
+      value.label,
+      value.value,
+      value.score,
+    );
+    return normalizeConfidenceValue(nested);
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value <= 1) {
+      if (value >= 0.85) {
+        return "High";
+      }
+      if (value >= 0.5) {
+        return "Med";
+      }
+      return "Low";
+    }
+    if (value <= 100) {
+      if (value >= 85) {
+        return "High";
+      }
+      if (value >= 50) {
+        return "Med";
+      }
+      return "Low";
+    }
+    return null;
+  }
+
   if (typeof value !== "string") {
     return null;
   }
@@ -239,6 +283,12 @@ function normalizeConfidenceValue(value: unknown): InvoiceConfidenceLevel | null
   if (lower === "low") {
     return "Low";
   }
+
+  const numeric = Number(lower);
+  if (Number.isFinite(numeric)) {
+    return normalizeConfidenceValue(numeric);
+  }
+
   return null;
 }
 
@@ -377,4 +427,13 @@ function pad2(value: string): string {
 
 function csvEscape(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
+}
+
+function firstDefined(...values: unknown[]): unknown {
+  for (const value of values) {
+    if (value !== undefined && value !== null) {
+      return value;
+    }
+  }
+  return null;
 }

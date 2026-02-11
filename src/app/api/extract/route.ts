@@ -532,7 +532,11 @@ function extractFixedInvoiceFields(outputs: unknown): DifyExtractPayload {
   }
 
   const fields = normalizeInvoiceFields(payload);
-  const confidence = normalizeInvoiceConfidence(payload.confidence);
+  let confidence = normalizeInvoiceConfidence(payload.confidence);
+  // Fallback: some workflows return confidence at top-level keys (e.g. vendor_confidence).
+  if (Object.keys(confidence).length === 0) {
+    confidence = normalizeInvoiceConfidence(payload);
+  }
   return { fields, confidence };
 }
 

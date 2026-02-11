@@ -16,6 +16,11 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "InvoiceJP",
   description: "InvoiceJP converts Japanese invoices to structured CSV",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    shortcut: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/icon.svg", type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({

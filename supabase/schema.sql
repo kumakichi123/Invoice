@@ -23,6 +23,8 @@ create table if not exists public.invoice_exports (
   document_type text,
   notes text,
   raw_json jsonb,
+  status text not null default 'active',
+  deleted_at timestamp with time zone,
   created_at timestamp with time zone not null default now()
 );
 
@@ -31,6 +33,11 @@ create table if not exists public.feedback_messages (
   user_id uuid not null references auth.users(id) on delete cascade,
   message text not null,
   needs_reply boolean not null default false,
+  attachment_bucket text,
+  attachment_path text,
+  attachment_file_name text,
+  attachment_content_type text,
+  attachment_size_bytes integer,
   created_at timestamp with time zone not null default now()
 );
 
@@ -69,6 +76,26 @@ alter table public.invoice_exports add column if not exists tax8_amount numeric;
 alter table public.invoice_exports add column if not exists payment_method text;
 alter table public.invoice_exports add column if not exists document_type text;
 alter table public.invoice_exports add column if not exists notes text;
+alter table public.invoice_exports add column if not exists status text not null default 'active';
+alter table public.invoice_exports add column if not exists deleted_at timestamp with time zone;
+update public.invoice_exports
+set status = 'active'
+where status is null;
+alter table public.invoice_exports alter column status set default 'active';
+alter table public.invoice_exports alter column status set not null;
+
+alter table public.feedback_messages add column if not exists attachment_bucket text;
+alter table public.feedback_messages add column if not exists attachment_path text;
+alter table public.feedback_messages add column if not exists attachment_file_name text;
+alter table public.feedback_messages add column if not exists attachment_content_type text;
+alter table public.feedback_messages add column if not exists attachment_size_bytes integer;
+
+create index if not exists invoice_exports_user_status_created_at_idx
+  on public.invoice_exports (user_id, status, created_at desc);
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('feedback-attachments', 'feedback-attachments', false, 10485760)
+on conflict (id) do nothing;
 
 alter table public.invoice_exports enable row level security;
 alter table public.feedback_messages enable row level security;

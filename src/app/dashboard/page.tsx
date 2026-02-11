@@ -75,6 +75,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         { count: "exact" },
       )
       .eq("user_id", user.id)
+      .eq("status", "active")
       .order("created_at", { ascending: false })
       .range(from, to);
 

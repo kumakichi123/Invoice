@@ -223,6 +223,8 @@ export function InvoiceMvp({
           document_type: normalizeDocumentTypeForDb(item.fields.documentType),
           notes: normalizeTextForDb(item.fields.notes),
           raw_json: rawJson,
+          status: "active",
+          deleted_at: null,
         })
         .eq("id", item.dbId)
         .eq("user_id", user.id)
@@ -258,6 +260,8 @@ export function InvoiceMvp({
       document_type: normalizeDocumentTypeForDb(item.fields.documentType),
       notes: normalizeTextForDb(item.fields.notes),
       raw_json: rawJson,
+      status: "active",
+      deleted_at: null,
     }).select("id").single();
 
     if (insertError) {
@@ -483,8 +487,12 @@ export function InvoiceMvp({
     if (target.dbId && supabase) {
       const { error: deleteError } = await supabase
         .from("invoice_exports")
-        .delete()
-        .eq("id", target.dbId);
+        .update({
+          status: "deleted",
+          deleted_at: new Date().toISOString(),
+        })
+        .eq("id", target.dbId)
+        .eq("status", "active");
       if (deleteError) {
         setError("Delete failed");
         return;
@@ -532,8 +540,12 @@ export function InvoiceMvp({
     if (selectedDbIds.length > 0 && supabase) {
       const { error: deleteError } = await supabase
         .from("invoice_exports")
-        .delete()
-        .in("id", selectedDbIds);
+        .update({
+          status: "deleted",
+          deleted_at: new Date().toISOString(),
+        })
+        .in("id", selectedDbIds)
+        .eq("status", "active");
       if (deleteError) {
         setError("Delete failed");
         return;
@@ -653,17 +665,6 @@ export function InvoiceMvp({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">InvoiceJP</h1>
-              <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-600">
-                <Link href="/legal/notice" className="underline underline-offset-4">
-                  Legal Notice
-                </Link>
-                <Link href="/legal/privacy" className="underline underline-offset-4">
-                  Privacy Policy
-                </Link>
-                <Link href="/legal/terms" className="underline underline-offset-4">
-                  Terms of Service
-                </Link>
-              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -710,25 +711,11 @@ export function InvoiceMvp({
             </div>
           </div>
 
-          {billingConfigured ? (
-            <p
-              className={`mt-3 rounded-lg px-3 py-2 text-xs ${
-                hasActivePlan
-                  ? "bg-emerald-50 text-emerald-800"
-                  : "bg-amber-50 text-amber-900"
-              }`}
-            >
-              {hasActivePlan
-                ? "Plan active: 100 included / month, $0.40 overage."
-                : freeRemaining > 0
-                  ? `No active plan. Free trial left: ${freeRemaining}/${FREE_EXTRACTIONS_WITHOUT_PLAN}.`
-                  : "No active plan. Subscribe to process invoices."}
-            </p>
-          ) : null}
-
-          {billingConfigured && billing.early_bird_applied ? (
-            <p className="mt-2 rounded-lg bg-cyan-50 px-3 py-2 text-xs text-cyan-900">
-              Early Bird active: lifetime 50% off is locked on your account.
+          {billingConfigured && !hasActivePlan ? (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              {freeRemaining > 0
+                ? `No active plan. Free trial left: ${freeRemaining}/${FREE_EXTRACTIONS_WITHOUT_PLAN}.`
+                : "No active plan. Subscribe to process invoices."}
             </p>
           ) : null}
 
@@ -991,6 +978,20 @@ export function InvoiceMvp({
             {error}
           </p>
         ) : null}
+
+        <footer className="mt-6 border-t border-slate-200 pt-4 text-xs text-slate-600">
+          <div className="flex flex-wrap items-center gap-3">
+            <Link href="/legal/notice" className="underline underline-offset-4">
+              Legal Notice
+            </Link>
+            <Link href="/legal/privacy" className="underline underline-offset-4">
+              Privacy Policy
+            </Link>
+            <Link href="/legal/terms" className="underline underline-offset-4">
+              Terms of Service
+            </Link>
+          </div>
+        </footer>
       </div>
 
       {reviewItem ? (

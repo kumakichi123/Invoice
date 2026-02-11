@@ -77,6 +77,9 @@ export async function POST(request: Request) {
       request.headers.get("origin") ??
       "http://localhost:3000";
 
+    const autoDiscounts =
+      applyEarlyBird && earlyBirdCouponId ? [{ coupon: earlyBirdCouponId }] : undefined;
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: stripeCustomerId,
@@ -86,8 +89,9 @@ export async function POST(request: Request) {
         { price: basePriceId, quantity: 1 },
         { price: usagePriceId },
       ],
-      allow_promotion_codes: true,
-      discounts: applyEarlyBird && earlyBirdCouponId ? [{ coupon: earlyBirdCouponId }] : undefined,
+      // Stripe forbids setting both allow_promotion_codes and discounts at once.
+      allow_promotion_codes: autoDiscounts ? undefined : true,
+      discounts: autoDiscounts,
       metadata: {
         supabase_user_id: user.id,
         early_bird_candidate: applyEarlyBird ? "true" : "false",

@@ -16,9 +16,12 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
   );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [isResetLoading, setIsResetLoading] = useState(false);
 
   const isLogin = mode === "login";
 
@@ -32,6 +35,14 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
     }
     if (!email || !password) {
       setMessage("Email + password required");
+      return;
+    }
+    if (!isLogin && password !== confirmPassword) {
+      setMessage("Password confirmation does not match");
+      return;
+    }
+    if (!isLogin && password.length < 8) {
+      setMessage("Password must be at least 8 characters");
       return;
     }
 
@@ -66,6 +77,34 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
       setMessage("Check your email");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleResetPassword() {
+    setMessage(null);
+
+    if (!supabase) {
+      setMessage("Set .env first");
+      return;
+    }
+    if (!email) {
+      setMessage("Enter your email first");
+      return;
+    }
+
+    setIsResetLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) {
+        setMessage("Failed to send reset email");
+        return;
+      }
+      setMessage("Password reset email sent");
+      setShowResetPassword(false);
+    } finally {
+      setIsResetLoading(false);
     }
   }
 
@@ -110,7 +149,7 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
           disabled={isGoogleLoading || isLoading}
           className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:opacity-50"
         >
-          <span>G</span>
+          <GoogleIcon />
           <span>{isGoogleLoading ? "Please wait..." : "Continue with Google"}</span>
         </button>
 
@@ -137,6 +176,16 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
             autoComplete={isLogin ? "current-password" : "new-password"}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
+          {!isLogin ? (
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              placeholder="Confirm password"
+              autoComplete="new-password"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+            />
+          ) : null}
           <button
             type="submit"
             disabled={isLoading}
@@ -144,6 +193,28 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
           >
             {isLoading ? "Please wait..." : isLogin ? "Login" : "Create account"}
           </button>
+          {isLogin ? (
+            <button
+              type="button"
+              onClick={() => setShowResetPassword((prev) => !prev)}
+              className="w-full text-left text-xs font-medium text-slate-700 underline underline-offset-4"
+            >
+              Forgot password?
+            </button>
+          ) : null}
+          {isLogin && showResetPassword ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+              <p>Send a password reset link to your email.</p>
+              <button
+                type="button"
+                onClick={() => void handleResetPassword()}
+                disabled={isResetLoading || isLoading}
+                className="mt-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 hover:bg-slate-100 disabled:opacity-50"
+              >
+                {isResetLoading ? "Sending..." : "Send reset email"}
+              </button>
+            </div>
+          ) : null}
         </form>
 
         {!supabaseConfigured ? (
@@ -189,5 +260,34 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
         </p>
       </section>
     </main>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        fill="#EA4335"
+        d="M9 7.36v3.46h4.95c-.2 1.11-.84 2.05-1.8 2.68l2.9 2.25c1.69-1.56 2.67-3.85 2.67-6.56 0-.63-.06-1.24-.16-1.83H9z"
+      />
+      <path
+        fill="#34A853"
+        d="M9 18c2.43 0 4.47-.8 5.96-2.17l-2.9-2.25c-.8.54-1.83.86-3.06.86-2.35 0-4.34-1.58-5.05-3.71H.95v2.34A9 9 0 0 0 9 18z"
+      />
+      <path
+        fill="#4A90E2"
+        d="M3.95 10.73A5.4 5.4 0 0 1 3.66 9c0-.6.1-1.18.29-1.73V4.93H.95A9 9 0 0 0 0 9c0 1.45.35 2.82.95 4.07l3-2.34z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M9 3.58c1.32 0 2.5.45 3.43 1.32l2.57-2.57A8.97 8.97 0 0 0 9 0 9 9 0 0 0 .95 4.93l3 2.34C4.66 5.16 6.65 3.58 9 3.58z"
+      />
+    </svg>
   );
 }
