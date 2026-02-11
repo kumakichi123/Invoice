@@ -14,8 +14,8 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Japan Invoice CSV",
-  description: "Convert Japanese invoices from PDF/image to structured CSV",
+  title: "InvoiceJP",
+  description: "InvoiceJP converts Japanese invoices to structured CSV",
 };
 
 export default function RootLayout({

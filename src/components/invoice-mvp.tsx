@@ -1,104 +1,302 @@
 "use client";
 
 import JSZip from "jszip";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
   createEmptyInvoiceFields,
   invoiceFieldsToCsv,
+  normalizeInvoiceConfidence,
   normalizeInvoiceFields,
   toNullableNumber,
+  type InvoiceFieldConfidence,
   type InvoiceFields,
 } from "@/lib/invoice";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { FeedbackFab } from "@/components/feedback-fab";
+import { isActiveBillingStatus } from "@/lib/billing";
 
 const MAX_FILES = 20;
 const MAX_FILE_SIZE_MB = 10;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
+const REVIEW_FIELD_CONFIG: Array<{
+  key: keyof InvoiceFields;
+  label: string;
+  type?: "text" | "date" | "time";
+  multiline?: boolean;
+}> = [
+  { key: "vendor", label: "Vendor" },
+  { key: "vendorRegistrationNumber", label: "Reg. Number" },
+  { key: "invoiceNumber", label: "Invoice No" },
+  { key: "issueDate", label: "Issue Date", type: "date" },
+  { key: "issueTime", label: "Issue Time", type: "time" },
+  { key: "dueDate", label: "Due Date", type: "date" },
+  { key: "currency", label: "Currency" },
+  { key: "subtotal", label: "Subtotal" },
+  { key: "taxAmount", label: "Tax Amount" },
+  { key: "total", label: "Total" },
+  { key: "totalAmountTaxInc", label: "Total (Tax Inc.)" },
+  { key: "tax10TargetAmount", label: "Tax 10% Target" },
+  { key: "tax10Amount", label: "Tax 10% Amount" },
+  { key: "tax8TargetAmount", label: "Tax 8% Target" },
+  { key: "tax8Amount", label: "Tax 8% Amount" },
+  { key: "paymentMethod", label: "Payment Method" },
+  { key: "documentType", label: "Document Type" },
+  { key: "notes", label: "Notes", multiline: true },
+];
+
+const FIELD_HELP: Record<keyof InvoiceFields, string> = {
+  vendor: "Store or supplier name.",
+  vendorRegistrationNumber: "Japanese invoice registration number (T + 13 digits).",
+  invoiceNumber: "Invoice or receipt number.",
+  issueDate: "Issue date in YYYY-MM-DD.",
+  issueTime: "Issue time in HH:mm (24h).",
+  dueDate: "Payment due date. Leave blank if not present.",
+  currency: "Currency code. Usually JPY.",
+  subtotal: "Amount before tax.",
+  taxAmount: "Total consumption tax.",
+  total: "Grand total including tax.",
+  totalAmountTaxInc: "Total amount including tax.",
+  tax10TargetAmount: "Taxable amount at 10%.",
+  tax10Amount: "Tax amount at 10%.",
+  tax8TargetAmount: "Taxable amount at 8%.",
+  tax8Amount: "Tax amount at 8%.",
+  paymentMethod: "Payment method such as card or cash.",
+  documentType: "Document type: receipt or invoice.",
+  notes: "Optional notes for manual correction.",
+};
+
 type InvoiceMvpProps = {
   initialUser: User | null;
   supabaseConfigured: boolean;
+  initialExports: InitialExportRow[];
+  currentPage: number;
+  totalPages: number;
+  totalExports: number;
+  billingConfigured: boolean;
+  billing: {
+    stripe_subscription_status: string | null;
+    early_bird_applied: boolean;
+  };
 };
 
 type QueueStatus = "queued" | "processing" | "done" | "needs_review" | "failed";
 type Confidence = "Low" | "Med" | "High";
+type QueueSource = "upload" | "db";
+
+type InitialExportRow = {
+  id: string;
+  source_file_name: string | null;
+  vendor: string | null;
+  vendor_registration_number: string | null;
+  invoice_number: string | null;
+  issue_date: string | null;
+  issue_time: string | null;
+  due_date: string | null;
+  currency: string | null;
+  subtotal: string | number | null;
+  tax_amount: string | number | null;
+  total: string | number | null;
+  total_amount_tax_inc: string | number | null;
+  tax10_target_amount: string | number | null;
+  tax10_amount: string | number | null;
+  tax8_target_amount: string | number | null;
+  tax8_amount: string | number | null;
+  payment_method: string | null;
+  document_type: string | null;
+  notes: string | null;
+  raw_json: unknown;
+  created_at: string;
+};
 
 type QueueItem = {
   id: string;
-  file: File;
+  dbId: string | null;
+  source: QueueSource;
+  createdAt: number;
+  processedAt: number | null;
+  selected: boolean;
+  file: File | null;
   name: string;
   size: number;
   status: QueueStatus;
   progress: number;
   fields: InvoiceFields;
-  rawJsonText: string;
-  notes: string;
+  confidence: InvoiceFieldConfidence;
   error: string | null;
 };
 
 type ExtractResponse = {
   fields?: unknown;
+  confidence?: unknown;
   raw?: unknown;
   error?: string;
 };
 
-export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps) {
+type SaveExportResult = {
+  id: string | null;
+  error: string | null;
+};
+
+export function InvoiceMvp({
+  initialUser,
+  supabaseConfigured,
+  initialExports,
+  currentPage,
+  totalPages,
+  totalExports,
+  billingConfigured,
+  billing,
+}: InvoiceMvpProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const supabase = useMemo(
     () => (supabaseConfigured ? getSupabaseBrowserClient() : null),
     [supabaseConfigured],
   );
+  const user = initialUser;
 
-  const [user, setUser] = useState<User | null>(initialUser);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [authStatus, setAuthStatus] = useState<string | null>(null);
-  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queue, setQueue] = useState<QueueItem[]>(() =>
+    initialExports.map((row) => createQueueItemFromExport(row)),
+  );
   const [isQueueRunning, setIsQueueRunning] = useState(false);
+  const [isSavingReview, setIsSavingReview] = useState(false);
+  const [isBillingActionRunning, setIsBillingActionRunning] = useState(false);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reviewItem = queue.find((item) => item.id === reviewId) ?? null;
-  const sortedQueue = [...queue].sort((a, b) => statusRank(a.status) - statusRank(b.status));
+  const sortedQueue = [...queue].sort((a, b) => b.createdAt - a.createdAt);
+  const hasActivePlan = isActiveBillingStatus(billing.stripe_subscription_status);
 
-  useEffect(() => {
-    if (!supabase) {
-      return;
+  const selectedCount = queue.filter((item) => item.selected).length;
+  const completedCount = queue.filter(
+    (item) => item.status === "done" || item.status === "needs_review",
+  ).length;
+  const selectedCompleted = queue.filter(
+    (item) => item.selected && (item.status === "done" || item.status === "needs_review"),
+  );
+
+  const saveExport = useCallback(async (item: QueueItem): Promise<SaveExportResult> => {
+    if (!supabase || !user) {
+      return { id: null, error: "Supabase session is missing" };
     }
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
+    const rawJson = createPersistedRawJson(item.fields, item.confidence);
 
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [supabase]);
+    if (item.source === "db" && item.dbId) {
+      const { data, error: updateError } = await supabase
+        .from("invoice_exports")
+        .update({
+          source_file_name: item.name,
+          vendor: item.fields.vendor,
+          vendor_registration_number: normalizeTextForDb(item.fields.vendorRegistrationNumber),
+          invoice_number: item.fields.invoiceNumber,
+          issue_date: normalizeDateForDb(item.fields.issueDate),
+          issue_time: normalizeTimeForDb(item.fields.issueTime),
+          due_date: normalizeDateForDb(item.fields.dueDate),
+          currency: item.fields.currency || "JPY",
+          subtotal: toNullableNumber(item.fields.subtotal),
+          tax_amount: toNullableNumber(item.fields.taxAmount),
+          total: toNullableNumber(item.fields.total),
+          total_amount_tax_inc: toNullableNumber(item.fields.totalAmountTaxInc),
+          tax10_target_amount: toNullableNumber(item.fields.tax10TargetAmount),
+          tax10_amount: toNullableNumber(item.fields.tax10Amount),
+          tax8_target_amount: toNullableNumber(item.fields.tax8TargetAmount),
+          tax8_amount: toNullableNumber(item.fields.tax8Amount),
+          payment_method: normalizeTextForDb(item.fields.paymentMethod),
+          document_type: normalizeDocumentTypeForDb(item.fields.documentType),
+          notes: normalizeTextForDb(item.fields.notes),
+          raw_json: rawJson,
+        })
+        .eq("id", item.dbId)
+        .eq("user_id", user.id)
+        .select("id")
+        .single();
+
+      if (updateError) {
+        return { id: null, error: updateError.message };
+      }
+
+      return { id: data?.id ?? item.dbId, error: null };
+    }
+
+    const { data, error: insertError } = await supabase.from("invoice_exports").insert({
+      user_id: user.id,
+      source_file_name: item.name,
+      vendor: item.fields.vendor,
+      vendor_registration_number: normalizeTextForDb(item.fields.vendorRegistrationNumber),
+      invoice_number: item.fields.invoiceNumber,
+      issue_date: normalizeDateForDb(item.fields.issueDate),
+      issue_time: normalizeTimeForDb(item.fields.issueTime),
+      due_date: normalizeDateForDb(item.fields.dueDate),
+      currency: item.fields.currency || "JPY",
+      subtotal: toNullableNumber(item.fields.subtotal),
+      tax_amount: toNullableNumber(item.fields.taxAmount),
+      total: toNullableNumber(item.fields.total),
+      total_amount_tax_inc: toNullableNumber(item.fields.totalAmountTaxInc),
+      tax10_target_amount: toNullableNumber(item.fields.tax10TargetAmount),
+      tax10_amount: toNullableNumber(item.fields.tax10Amount),
+      tax8_target_amount: toNullableNumber(item.fields.tax8TargetAmount),
+      tax8_amount: toNullableNumber(item.fields.tax8Amount),
+      payment_method: normalizeTextForDb(item.fields.paymentMethod),
+      document_type: normalizeDocumentTypeForDb(item.fields.documentType),
+      notes: normalizeTextForDb(item.fields.notes),
+      raw_json: rawJson,
+    }).select("id").single();
+
+    if (insertError) {
+      return { id: null, error: insertError.message };
+    }
+
+    if (data?.id) {
+      setQueue((prev) =>
+        prev.map((entry) =>
+          entry.id === item.id
+            ? {
+                ...entry,
+                source: "db",
+                dbId: data.id,
+              }
+            : entry,
+        ),
+      );
+      return { id: data.id, error: null };
+    }
+
+    return { id: null, error: "No id returned from insert" };
+  }, [supabase, user]);
+
+  useEffect(() => {
+    setQueue(initialExports.map((row) => createQueueItemFromExport(row)));
+    setReviewId(null);
+  }, [currentPage, initialExports]);
 
   const processSingle = useCallback(async (id: string) => {
     const target = queue.find((item) => item.id === id);
-    if (!target) {
+    if (!target || !target.file) {
       return;
     }
 
     setIsQueueRunning(true);
     setQueue((prev) =>
       prev.map((item) =>
-        item.id === id ? { ...item, status: "processing", progress: 35, error: null } : item,
+        item.id === id
+          ? { ...item, status: "processing", progress: 35, error: null }
+          : item,
       ),
     );
 
     try {
       const payload = await runExtract(target.file);
       const normalized = normalizeInvoiceFields(payload.fields ?? {});
+      const normalizedConfidence = normalizeInvoiceConfidence(payload.confidence);
       const nextStatus = needsReview(normalized) ? "needs_review" : "done";
-      const rawJsonText = JSON.stringify(payload.raw ?? {}, null, 2);
+      const processedAt = Date.now();
 
       setQueue((prev) =>
         prev.map((item) =>
@@ -108,24 +306,57 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
                 status: nextStatus,
                 progress: 100,
                 fields: normalized,
-                rawJsonText,
+                confidence: normalizedConfidence,
+                processedAt,
                 error: null,
               }
             : item,
         ),
       );
-      setStatus("Processed");
+
+      const saveResult = await saveExport({
+        ...target,
+        status: nextStatus,
+        progress: 100,
+        fields: normalized,
+        confidence: normalizedConfidence,
+        processedAt,
+      });
+
+      if (saveResult.error) {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  error: "DB save failed",
+                }
+              : item,
+          ),
+        );
+        setError(`DB save failed: ${saveResult.error}`);
+      } else {
+        setStatus("Processed");
+      }
     } catch (runError) {
       const message = runError instanceof Error ? shortError(runError.message) : "Failed";
       setQueue((prev) =>
         prev.map((item) =>
-          item.id === id ? { ...item, status: "failed", progress: 0, error: message } : item,
+          item.id === id
+            ? {
+                ...item,
+                status: "failed",
+                progress: 0,
+                processedAt: Date.now(),
+                error: message,
+              }
+            : item,
         ),
       );
     } finally {
       setIsQueueRunning(false);
     }
-  }, [queue]);
+  }, [queue, saveExport]);
 
   useEffect(() => {
     if (!supabaseConfigured || !user || isQueueRunning) {
@@ -157,61 +388,63 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
     return payload;
   }
 
-  async function signIn() {
-    resetMessages();
-    if (!supabase) {
-      setAuthStatus("Set .env");
-      return;
-    }
-    if (!email || !password) {
-      setAuthStatus("Email + password");
-      return;
-    }
-
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    if (signInError) {
-      setAuthStatus("Login failed");
-      return;
-    }
-
-    setAuthStatus("Logged in");
-    setPassword("");
-  }
-
-  async function signUp() {
-    resetMessages();
-    if (!supabase) {
-      setAuthStatus("Set .env");
-      return;
-    }
-    if (!email || !password) {
-      setAuthStatus("Email + password");
-      return;
-    }
-
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: window.location.origin },
-    });
-
-    if (signUpError) {
-      setAuthStatus("Sign up failed");
-      return;
-    }
-
-    setAuthStatus(data.session ? "Logged in" : "Check email");
-    setPassword("");
-  }
-
   async function signOut() {
-    resetMessages();
     if (!supabase) {
-      setAuthStatus("Set .env");
+      setError("Set .env first");
       return;
     }
     await supabase.auth.signOut();
-    setAuthStatus("Logged out");
+    window.location.href = "/login";
+  }
+
+  async function startCheckout(interval: "monthly" | "yearly") {
+    setIsBillingActionRunning(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ interval }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        url?: string;
+      };
+      if (!response.ok || !payload.url) {
+        setError(payload.error ?? "Checkout failed.");
+        return;
+      }
+
+      window.location.href = payload.url;
+    } finally {
+      setIsBillingActionRunning(false);
+    }
+  }
+
+  async function openBillingPortal() {
+    setIsBillingActionRunning(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/billing/portal", {
+        method: "POST",
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        url?: string;
+      };
+      if (!response.ok || !payload.url) {
+        setError(payload.error ?? "Portal failed.");
+        return;
+      }
+
+      window.location.href = payload.url;
+    } finally {
+      setIsBillingActionRunning(false);
+    }
   }
 
   function handleSelectFiles(fileList: FileList | null) {
@@ -219,13 +452,21 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
     if (!fileList || fileList.length === 0) {
       return;
     }
-
+    if (!user) {
+      setError("Login first");
+      return;
+    }
     if (!supabaseConfigured) {
       setError("Set .env first");
       return;
     }
+    if (billingConfigured && !hasActivePlan) {
+      setError("Subscription required");
+      return;
+    }
 
-    const available = MAX_FILES - queue.length;
+    const uploadCount = queue.filter((item) => item.source === "upload").length;
+    const available = MAX_FILES - uploadCount;
     if (available <= 0) {
       setError("Max 20 files");
       return;
@@ -259,9 +500,88 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
   function retryItem(id: string) {
     setQueue((prev) =>
       prev.map((item) =>
-        item.id === id ? { ...item, status: "queued", progress: 0, error: null } : item,
+        item.id === id
+          ? {
+              ...item,
+              status: "queued",
+              progress: 0,
+              processedAt: null,
+              error: null,
+            }
+          : item,
       ),
     );
+  }
+
+  async function removeItem(id: string) {
+    const target = queue.find((item) => item.id === id);
+    if (!target) {
+      return;
+    }
+
+    if (target.dbId && supabase) {
+      const { error: deleteError } = await supabase
+        .from("invoice_exports")
+        .delete()
+        .eq("id", target.dbId);
+      if (deleteError) {
+        setError("Delete failed");
+        return;
+      }
+    }
+
+    setQueue((prev) => prev.filter((item) => item.id !== id));
+    setReviewId((prev) => (prev === id ? null : prev));
+  }
+
+  function toggleItemSelection(id: string) {
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, selected: !item.selected } : item,
+      ),
+    );
+  }
+
+  function selectCompleted() {
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.status === "done" || item.status === "needs_review"
+          ? { ...item, selected: true }
+          : item,
+      ),
+    );
+  }
+
+  function clearSelection() {
+    setQueue((prev) => prev.map((item) => ({ ...item, selected: false })));
+  }
+
+  async function deleteSelected() {
+    if (selectedCount === 0) {
+      setError("Select files first");
+      return;
+    }
+
+    const selectedItems = queue.filter((item) => item.selected);
+    const selectedIds = new Set(selectedItems.map((item) => item.id));
+    const selectedDbIds = selectedItems
+      .map((item) => item.dbId)
+      .filter((value): value is string => Boolean(value));
+
+    if (selectedDbIds.length > 0 && supabase) {
+      const { error: deleteError } = await supabase
+        .from("invoice_exports")
+        .delete()
+        .in("id", selectedDbIds);
+      if (deleteError) {
+        setError("Delete failed");
+        return;
+      }
+    }
+
+    setQueue((prev) => prev.filter((item) => !selectedIds.has(item.id)));
+    setReviewId((prev) => (prev && selectedIds.has(prev) ? null : prev));
+    setStatus("Selected files deleted");
   }
 
   function openReview(id: string) {
@@ -284,7 +604,7 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
               ...item,
               fields: {
                 ...item.fields,
-                [name]: name === "currency" ? "JPY" : value,
+                [name]: value,
               },
             }
           : item,
@@ -292,40 +612,21 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
     );
   }
 
-  function updateReviewNotes(value: string) {
+  async function saveReview() {
     if (!reviewItem) {
       return;
     }
 
-    setQueue((prev) =>
-      prev.map((item) => (item.id === reviewItem.id ? { ...item, notes: value } : item)),
-    );
-  }
+    setIsSavingReview(true);
+    const saveResult = await saveExport(reviewItem);
+    setIsSavingReview(false);
 
-  function applyReviewJson(value: string) {
-    if (!reviewItem) {
+    if (saveResult.error) {
+      setError(`DB save failed: ${saveResult.error}`);
       return;
     }
 
-    try {
-      const parsed = JSON.parse(value);
-      const normalized = normalizeInvoiceFields(parsed);
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.id === reviewItem.id
-            ? {
-                ...item,
-                rawJsonText: value,
-                fields: normalized,
-                status: needsReview(normalized) ? "needs_review" : "done",
-              }
-            : item,
-        ),
-      );
-      setStatus("Updated");
-    } catch {
-      setError("Invalid JSON");
-    }
+    setStatus("Saved");
   }
 
   async function downloadItemCsv(itemId: string) {
@@ -335,23 +636,32 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
       return;
     }
 
+    const saveResult = await saveExport(item);
+    if (saveResult.error) {
+      setError(`DB save failed: ${saveResult.error}`);
+      return;
+    }
     triggerCsvDownload(invoiceFieldsToCsv(item.fields), item.name);
-    await saveExport(item);
     setStatus("CSV downloaded");
   }
 
-  async function downloadAllZip() {
+  async function downloadSelectedZip() {
     resetMessages();
-    const completed = queue.filter(
-      (item) => item.status === "done" || item.status === "needs_review",
-    );
-    if (completed.length === 0) {
-      setError("No completed files");
+    if (selectedCompleted.length === 0) {
+      setError("Select completed files");
       return;
     }
 
+    for (const item of selectedCompleted) {
+      const saveResult = await saveExport(item);
+      if (saveResult.error) {
+        setError(`DB save failed: ${saveResult.error}`);
+        return;
+      }
+    }
+
     const zip = new JSZip();
-    completed.forEach((item) => {
+    selectedCompleted.forEach((item) => {
       const base = item.name.replace(/\.[a-z0-9]+$/i, "");
       const safe = base.replace(/[^a-z0-9-_]/gi, "_");
       zip.file(`${safe}.csv`, invoiceFieldsToCsv(item.fields));
@@ -361,32 +671,13 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.href = url;
-    link.download = "invoice-csv.zip";
+    link.download = "invoice-selected-csv.zip";
     document.body.append(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    setStatus("ZIP downloaded");
-  }
 
-  async function saveExport(item: QueueItem) {
-    if (!supabase || !user) {
-      return;
-    }
-
-    await supabase.from("invoice_exports").insert({
-      user_id: user.id,
-      source_file_name: item.name,
-      vendor: item.fields.vendor,
-      invoice_number: item.fields.invoiceNumber,
-      issue_date: item.fields.issueDate || null,
-      due_date: item.fields.dueDate || null,
-      currency: "JPY",
-      subtotal: toNullableNumber(item.fields.subtotal),
-      tax_amount: toNullableNumber(item.fields.taxAmount),
-      total: toNullableNumber(item.fields.total),
-      raw_json: safeParseJson(item.rawJsonText),
-    });
+    setStatus("Selected ZIP downloaded");
   }
 
   function resetMessages() {
@@ -398,16 +689,60 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
     <main className="min-h-screen bg-[#f4f5f8] text-slate-900">
       <div className="mx-auto max-w-6xl px-4 py-5 md:px-6">
         <header className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <h1 className="text-3xl font-semibold tracking-tight">Invoice Extractor</h1>
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight">InvoiceJP</h1>
+              <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-600">
+                <Link href="/legal/tokushoho" className="underline underline-offset-4">
+                  特商法に基づく表記
+                </Link>
+                <Link href="/legal/privacy" className="underline underline-offset-4">
+                  プライバシーポリシー
+                </Link>
+                <Link href="/legal/terms" className="underline underline-offset-4">
+                  利用規約
+                </Link>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setShowPrivacy((prev) => !prev)}
+                onClick={() => setShowHelp((prev) => !prev)}
                 className="rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
               >
-                Privacy
+                Help
               </button>
+              {user && billingConfigured ? (
+                hasActivePlan ? (
+                  <button
+                    type="button"
+                    onClick={() => void openBillingPortal()}
+                    disabled={isBillingActionRunning}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-60"
+                  >
+                    Billing
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void startCheckout("monthly")}
+                      disabled={isBillingActionRunning}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold disabled:opacity-60"
+                    >
+                      $29/mo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void startCheckout("yearly")}
+                      disabled={isBillingActionRunning}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold disabled:opacity-60"
+                    >
+                      Yearly -20%
+                    </button>
+                  </div>
+                )
+              ) : null}
               {user ? (
                 <button
                   type="button"
@@ -417,52 +752,47 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
                   Logout
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={signIn}
+                <Link
+                  href="/login"
                   className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold"
                 >
                   Login
-                </button>
+                </Link>
               )}
             </div>
           </div>
 
-          {showPrivacy ? (
-            <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              Files can be deleted on request.
+          {billingConfigured ? (
+            <p
+              className={`mt-3 rounded-lg px-3 py-2 text-xs ${
+                hasActivePlan
+                  ? "bg-emerald-50 text-emerald-800"
+                  : "bg-amber-50 text-amber-900"
+              }`}
+            >
+              {hasActivePlan
+                ? "Plan active: 100 included / month, $0.40 overage."
+                : "No active plan. Subscribe to process invoices."}
+              {!billing.early_bird_applied ? " First 10 users get 50% off." : ""}
             </p>
           ) : null}
 
-          {!user ? (
-            <div className="mt-3 grid gap-2 md:grid-cols-3">
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="Email"
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
-              />
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Password"
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
-              />
-              <button
-                type="button"
-                onClick={signUp}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-              >
-                Create account
-              </button>
-            </div>
+          {showHelp ? (
+            <section className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <h2 className="text-sm font-semibold text-slate-900">Field Guide</h2>
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                {REVIEW_FIELD_CONFIG.map((field) => (
+                  <p key={field.key} className="text-xs text-slate-700">
+                    <span className="font-semibold">{field.label}:</span> {FIELD_HELP[field.key]}
+                  </p>
+                ))}
+              </div>
+            </section>
           ) : null}
 
-          {authStatus ? (
-            <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-              {authStatus}
+          {!supabaseConfigured ? (
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Missing Supabase env vars.
             </p>
           ) : null}
         </header>
@@ -480,7 +810,7 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
               dragging ? "border-blue-400 bg-blue-50" : "border-slate-300 bg-slate-50"
             }`}
           >
-            <p className="text-2xl">☁</p>
+            <p className="text-sm text-slate-500">UPLOAD</p>
             <p className="mt-2 text-3xl font-medium">Drop PDFs or images here</p>
             <p className="mt-1 text-lg text-slate-600">or click to upload</p>
             <p className="mt-4 text-sm text-slate-500">
@@ -495,36 +825,63 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
                 handleSelectFiles(event.target.files);
                 event.currentTarget.value = "";
               }}
-              disabled={!supabaseConfigured}
+              disabled={!supabaseConfigured || !user || (billingConfigured && !hasActivePlan)}
               className="hidden"
             />
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-              <span className="text-slate-600">Output format:</span>
-              <strong>CSV</strong>
-            </div>
-            <button
-              type="button"
-              onClick={() => setStatus("Tips: 300dpi / no shadow / straight scan")}
-              className="text-xs text-slate-500 underline underline-offset-2"
-            >
-              Upload better scan tips
-            </button>
+          <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+            <span className="text-slate-600">Output format:</span>
+            <strong>CSV</strong>
           </div>
         </section>
 
         <section className="mt-4">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-3xl font-semibold tracking-tight">Processing Files</h2>
-            <button
-              type="button"
-              onClick={downloadAllZip}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold shadow-sm hover:bg-slate-50"
-            >
-              Download All (ZIP)
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {completedCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={selectCompleted}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                >
+                  Select completed
+                </button>
+              ) : null}
+              {selectedCount > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={clearSelection}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                  >
+                    Clear selection
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadSelectedZip}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold shadow-sm hover:bg-slate-50"
+                  >
+                    Download Selected (ZIP)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteSelected()}
+                    className="rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50"
+                  >
+                    Delete Selected
+                  </button>
+                </>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-slate-600">DB: {totalExports} files</p>
+            {selectedCount > 0 ? (
+              <p className="text-sm text-slate-600">Selected: {selectedCount}</p>
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-3">
@@ -536,24 +893,42 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
               sortedQueue.map((item) => (
                 <article
                   key={item.id}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm"
+                  className={`rounded-xl border bg-white px-4 py-4 shadow-sm ${
+                    item.selected ? "border-blue-300" : "border-slate-200"
+                  }`}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-lg font-semibold">{item.name}</p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={item.selected}
+                          onChange={() => toggleItemSelection(item.id)}
+                          className="h-4 w-4"
+                        />
+                        <p className="truncate text-lg font-semibold">{item.name}</p>
+                        {(item.status === "done" || item.status === "needs_review") && (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                            OK
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm text-slate-500">{formatFileMeta(item.file, item.size)}</p>
+                      {item.processedAt ? (
+                        <p className="mt-1 text-xs text-slate-500">Processed: {formatDateTime(item.processedAt)}</p>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2">
                       {(item.status === "done" || item.status === "needs_review") && (
                         <button
                           type="button"
-                          onClick={() => downloadItemCsv(item.id)}
+                          onClick={() => void downloadItemCsv(item.id)}
                           className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
                         >
                           Download CSV
                         </button>
                       )}
-                      {item.status === "needs_review" && (
+                      {(item.status === "done" || item.status === "needs_review") && (
                         <button
                           type="button"
                           onClick={() => openReview(item.id)}
@@ -571,6 +946,13 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
                           Retry
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => void removeItem(item.id)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
 
@@ -591,6 +973,40 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
               ))
             )}
           </div>
+
+          {totalPages > 1 ? (
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Link
+                href={currentPage > 1 ? `/dashboard?page=${currentPage - 1}` : "/dashboard"}
+                aria-disabled={currentPage <= 1}
+                className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+                  currentPage <= 1
+                    ? "pointer-events-none border-slate-200 bg-slate-100 text-slate-400"
+                    : "border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+                }`}
+              >
+                Prev
+              </Link>
+              <span className="text-sm text-slate-600">
+                {currentPage} / {totalPages}
+              </span>
+              <Link
+                href={
+                  currentPage < totalPages
+                    ? `/dashboard?page=${currentPage + 1}`
+                    : `/dashboard?page=${totalPages}`
+                }
+                aria-disabled={currentPage >= totalPages}
+                className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+                  currentPage >= totalPages
+                    ? "pointer-events-none border-slate-200 bg-slate-100 text-slate-400"
+                    : "border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+                }`}
+              >
+                Next
+              </Link>
+            </div>
+          ) : null}
         </section>
 
         {status ? (
@@ -620,86 +1036,29 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
 
           <p className="mt-2 truncate text-xs text-slate-500">{reviewItem.name}</p>
 
-          <div className="mt-4 flex flex-col gap-2">
-            <ReviewField
-              label="Vendor"
-              value={reviewItem.fields.vendor}
-              confidence={fieldConfidence("vendor", reviewItem.fields.vendor)}
-              onChange={(value) => updateReviewField("vendor", value)}
-            />
-            <ReviewField
-              label="Invoice No"
-              value={reviewItem.fields.invoiceNumber}
-              confidence={fieldConfidence("invoiceNumber", reviewItem.fields.invoiceNumber)}
-              onChange={(value) => updateReviewField("invoiceNumber", value)}
-            />
-            <ReviewField
-              label="Issue Date"
-              type="date"
-              value={reviewItem.fields.issueDate}
-              confidence={fieldConfidence("issueDate", reviewItem.fields.issueDate)}
-              onChange={(value) => updateReviewField("issueDate", value)}
-            />
-            <ReviewField
-              label="Due Date"
-              type="date"
-              value={reviewItem.fields.dueDate}
-              confidence={fieldConfidence("dueDate", reviewItem.fields.dueDate)}
-              onChange={(value) => updateReviewField("dueDate", value)}
-            />
-            <ReviewField
-              label="Subtotal"
-              value={reviewItem.fields.subtotal}
-              confidence={fieldConfidence("subtotal", reviewItem.fields.subtotal)}
-              onChange={(value) => updateReviewField("subtotal", value)}
-            />
-            <ReviewField
-              label="Tax"
-              value={reviewItem.fields.taxAmount}
-              confidence={fieldConfidence("taxAmount", reviewItem.fields.taxAmount)}
-              onChange={(value) => updateReviewField("taxAmount", value)}
-            />
-            <ReviewField
-              label="Total"
-              value={reviewItem.fields.total}
-              confidence={fieldConfidence("total", reviewItem.fields.total)}
-              onChange={(value) => updateReviewField("total", value)}
-            />
+          <div className="mt-4 max-h-[62vh] space-y-2 overflow-y-auto pr-1">
+            {REVIEW_FIELD_CONFIG.map((field) => (
+              <ReviewField
+                key={field.key}
+                label={field.label}
+                help={FIELD_HELP[field.key]}
+                value={reviewItem.fields[field.key]}
+                confidence={resolveFieldConfidence(reviewItem, field.key)}
+                type={field.type}
+                multiline={field.multiline}
+                onChange={(value) => updateReviewField(field.key, value)}
+              />
+            ))}
           </div>
-
-          <label className="mt-3 block">
-            <span className="text-xs font-semibold text-slate-700">Notes</span>
-            <textarea
-              value={reviewItem.notes}
-              onChange={(event) => updateReviewNotes(event.target.value)}
-              rows={3}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-            />
-          </label>
-
-          <label className="mt-3 block">
-            <span className="text-xs font-semibold text-slate-700">Raw JSON</span>
-            <textarea
-              value={reviewItem.rawJsonText}
-              onChange={(event) =>
-                setQueue((prev) =>
-                  prev.map((item) =>
-                    item.id === reviewItem.id ? { ...item, rawJsonText: event.target.value } : item,
-                  ),
-                )
-              }
-              rows={6}
-              className="mono mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs outline-none focus:border-slate-500"
-            />
-          </label>
 
           <div className="mt-4 flex gap-2">
             <button
               type="button"
-              onClick={() => applyReviewJson(reviewItem.rawJsonText)}
+              onClick={() => void saveReview()}
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+              disabled={isSavingReview}
             >
-              Apply JSON
+              {isSavingReview ? "Saving..." : "Save"}
             </button>
             <button
               type="button"
@@ -711,21 +1070,33 @@ export function InvoiceMvp({ initialUser, supabaseConfigured }: InvoiceMvpProps)
           </div>
         </aside>
       ) : null}
+
+      {user ? <FeedbackFab /> : null}
     </main>
   );
 }
 
 function ReviewField(props: {
   label: string;
+  help: string;
   value: string;
   confidence: Confidence;
   onChange: (value: string) => void;
-  type?: string;
+  type?: "text" | "date" | "time";
+  multiline?: boolean;
 }) {
   return (
     <label className="rounded-lg border border-slate-200 p-2">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-700">{props.label}</span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          <span className="text-xs font-semibold text-slate-700">{props.label}</span>
+          <span
+            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 text-[10px] text-slate-600"
+            title={props.help}
+          >
+            ?
+          </span>
+        </div>
         <span
           className={`text-xs ${
             props.confidence === "Low"
@@ -738,12 +1109,21 @@ function ReviewField(props: {
           {props.confidence}
         </span>
       </div>
-      <input
-        type={props.type ?? "text"}
-        value={props.value}
-        onChange={(event) => props.onChange(event.target.value)}
-        className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
-      />
+      {props.multiline ? (
+        <textarea
+          value={props.value}
+          onChange={(event) => props.onChange(event.target.value)}
+          rows={3}
+          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+        />
+      ) : (
+        <input
+          type={props.type ?? "text"}
+          value={props.value}
+          onChange={(event) => props.onChange(event.target.value)}
+          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+        />
+      )}
     </label>
   );
 }
@@ -785,16 +1165,74 @@ function StatusBadge({ status }: { status: QueueStatus }) {
 }
 
 function createQueueItem(file: File, index: number): QueueItem {
+  const createdAt = Date.now() + index;
   return {
-    id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
+    dbId: null,
+    source: "upload",
+    createdAt,
+    processedAt: null,
+    selected: false,
     file,
     name: file.name,
     size: file.size,
     status: "queued",
     progress: 0,
     fields: createEmptyInvoiceFields(),
-    rawJsonText: "{}",
-    notes: "",
+    confidence: {},
+    error: null,
+  };
+}
+
+function createQueueItemFromExport(row: InitialExportRow): QueueItem {
+  const parsedRaw = isRecord(row.raw_json) ? row.raw_json : {};
+  const fieldsPayload =
+    isRecord(parsedRaw.fields) ? parsedRaw.fields : parsedRaw;
+  const confidencePayload =
+    isRecord(parsedRaw.confidence) ? parsedRaw.confidence : undefined;
+  const normalized = normalizeInvoiceFields(fieldsPayload);
+  const confidence = normalizeInvoiceConfidence(
+    confidencePayload,
+  );
+  const createdAt = Date.parse(row.created_at) || Date.now();
+
+  const fields: InvoiceFields = {
+    ...normalized,
+    vendor: normalized.vendor || row.vendor || "",
+    vendorRegistrationNumber:
+      normalized.vendorRegistrationNumber || row.vendor_registration_number || "",
+    invoiceNumber: normalized.invoiceNumber || row.invoice_number || "",
+    issueDate: normalized.issueDate || row.issue_date || "",
+    issueTime: normalized.issueTime || row.issue_time || "",
+    dueDate: normalized.dueDate || row.due_date || "",
+    currency: normalized.currency || row.currency || "JPY",
+    subtotal: normalized.subtotal || formatNumberLike(row.subtotal),
+    taxAmount: normalized.taxAmount || formatNumberLike(row.tax_amount),
+    total: normalized.total || formatNumberLike(row.total),
+    totalAmountTaxInc: normalized.totalAmountTaxInc || formatNumberLike(row.total_amount_tax_inc),
+    tax10TargetAmount: normalized.tax10TargetAmount || formatNumberLike(row.tax10_target_amount),
+    tax10Amount: normalized.tax10Amount || formatNumberLike(row.tax10_amount),
+    tax8TargetAmount: normalized.tax8TargetAmount || formatNumberLike(row.tax8_target_amount),
+    tax8Amount: normalized.tax8Amount || formatNumberLike(row.tax8_amount),
+    paymentMethod: normalized.paymentMethod || row.payment_method || "",
+    documentType: normalized.documentType || row.document_type || "",
+    notes: normalized.notes || row.notes || "",
+  };
+
+  return {
+    id: `db-${row.id}`,
+    dbId: row.id,
+    source: "db",
+    createdAt,
+    processedAt: createdAt,
+    selected: false,
+    file: null,
+    name: row.source_file_name || `${row.id}.csv`,
+    size: 0,
+    status: needsReview(fields) ? "needs_review" : "done",
+    progress: 100,
+    fields,
+    confidence,
     error: null,
   };
 }
@@ -809,7 +1247,20 @@ function isSupportedFile(file: File): boolean {
   return file.name.toLowerCase().endsWith(".pdf");
 }
 
-function formatFileMeta(file: File, size: number): string {
+function formatNumberLike(value: string | number | null): string {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : "";
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  return "";
+}
+
+function formatFileMeta(file: File | null, size: number): string {
+  if (!file) {
+    return "Saved export";
+  }
   const typeLabel = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
     ? "PDF"
     : "Image";
@@ -826,20 +1277,46 @@ function formatFileSize(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-function statusRank(status: QueueStatus): number {
-  if (status === "done") {
-    return 0;
+function formatDateTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const yy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yy}-${mm}-${dd} ${hh}:${min}`;
+}
+
+function normalizeDateForDb(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
   }
-  if (status === "needs_review") {
-    return 1;
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
+}
+
+function normalizeTimeForDb(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
   }
-  if (status === "processing") {
-    return 2;
+  return /^\d{2}:\d{2}$/.test(trimmed) ? trimmed : null;
+}
+
+function normalizeDocumentTypeForDb(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
   }
-  if (status === "queued") {
-    return 3;
+  if (trimmed === "receipt" || trimmed === "invoice") {
+    return trimmed;
   }
-  return 4;
+  return null;
+}
+
+function normalizeTextForDb(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function needsReview(fields: InvoiceFields): boolean {
@@ -850,7 +1327,15 @@ function needsReview(fields: InvoiceFields): boolean {
   return !Number.isFinite(total);
 }
 
-function fieldConfidence(name: keyof InvoiceFields, value: string): Confidence {
+function resolveFieldConfidence(item: QueueItem, name: keyof InvoiceFields): Confidence {
+  const fromDify = item.confidence[name];
+  if (fromDify) {
+    return fromDify;
+  }
+  return heuristicConfidence(name, item.fields[name]);
+}
+
+function heuristicConfidence(name: keyof InvoiceFields, value: string): Confidence {
   if (!value) {
     return "Low";
   }
@@ -858,7 +1343,18 @@ function fieldConfidence(name: keyof InvoiceFields, value: string): Confidence {
   if (name === "issueDate" || name === "dueDate") {
     return /^\d{4}-\d{2}-\d{2}$/.test(value) ? "High" : "Low";
   }
-  if (name === "subtotal" || name === "taxAmount" || name === "total") {
+  if (name === "issueTime") {
+    return /^\d{2}:\d{2}$/.test(value) ? "High" : "Low";
+  }
+  if (
+    name === "subtotal" ||
+    name === "taxAmount" ||
+    name === "total" ||
+    name === "tax10TargetAmount" ||
+    name === "tax10Amount" ||
+    name === "tax8TargetAmount" ||
+    name === "tax8Amount"
+  ) {
     return Number.isFinite(Number(value)) ? "High" : "Low";
   }
   if (value.length < 3) {
@@ -871,6 +1367,15 @@ function shortError(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes("unauthorized")) {
     return "Login required";
+  }
+  if (lower.includes("subscription required")) {
+    return "Subscription required";
+  }
+  if (lower.includes("timeout") || lower.includes("gateway")) {
+    return "Dify timeout";
+  }
+  if (lower.includes("cloudflare")) {
+    return "Dify upstream error";
   }
   if (lower.includes("empty")) {
     return "Empty file";
@@ -887,12 +1392,18 @@ function shortError(message: string): string {
   return "Failed";
 }
 
-function safeParseJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return { raw: value };
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createPersistedRawJson(
+  fields: InvoiceFields,
+  confidence: InvoiceFieldConfidence,
+): Record<string, unknown> {
+  return {
+    fields,
+    confidence,
+  };
 }
 
 function triggerCsvDownload(csvText: string, sourceName: string) {
