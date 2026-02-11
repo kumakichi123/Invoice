@@ -20,6 +20,8 @@ import { isActiveBillingStatus } from "@/lib/billing";
 const MAX_FILES = 20;
 const MAX_FILE_SIZE_MB = 10;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+const INCLUDED_PER_MONTH = 100;
+const FREE_EXTRACTIONS_WITHOUT_PLAN = 5;
 
 const REVIEW_FIELD_CONFIG: Array<{
   key: keyof InvoiceFields;
@@ -80,6 +82,10 @@ type InvoiceMvpProps = {
     stripe_subscription_status: string | null;
     early_bird_applied: boolean;
   };
+  usageThisMonth: number;
+  lifetimeProcessed: number;
+  earlyBirdEligible: boolean;
+  earlyBirdSlotsLeft: number | null;
 };
 
 type QueueStatus = "queued" | "processing" | "done" | "needs_review" | "failed";
@@ -149,6 +155,10 @@ export function InvoiceMvp({
   totalExports,
   billingConfigured,
   billing,
+  usageThisMonth,
+  lifetimeProcessed,
+  earlyBirdEligible,
+  earlyBirdSlotsLeft,
 }: InvoiceMvpProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const supabase = useMemo(
@@ -164,7 +174,6 @@ export function InvoiceMvp({
   );
   const [isQueueRunning, setIsQueueRunning] = useState(false);
   const [isSavingReview, setIsSavingReview] = useState(false);
-  const [isBillingActionRunning, setIsBillingActionRunning] = useState(false);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -172,6 +181,8 @@ export function InvoiceMvp({
   const reviewItem = queue.find((item) => item.id === reviewId) ?? null;
   const sortedQueue = [...queue].sort((a, b) => b.createdAt - a.createdAt);
   const hasActivePlan = isActiveBillingStatus(billing.stripe_subscription_status);
+  const freeRemaining = Math.max(0, FREE_EXTRACTIONS_WITHOUT_PLAN - lifetimeProcessed);
+  const showEarlyBirdAvailable = billingConfigured && !billing.early_bird_applied && earlyBirdEligible;
 
   const selectedCount = queue.filter((item) => item.selected).length;
   const completedCount = queue.filter(
@@ -397,56 +408,6 @@ export function InvoiceMvp({
     window.location.href = "/login";
   }
 
-  async function startCheckout(interval: "monthly" | "yearly") {
-    setIsBillingActionRunning(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/billing/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ interval }),
-      });
-
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        url?: string;
-      };
-      if (!response.ok || !payload.url) {
-        setError(payload.error ?? "Checkout failed.");
-        return;
-      }
-
-      window.location.href = payload.url;
-    } finally {
-      setIsBillingActionRunning(false);
-    }
-  }
-
-  async function openBillingPortal() {
-    setIsBillingActionRunning(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/billing/portal", {
-        method: "POST",
-      });
-
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        url?: string;
-      };
-      if (!response.ok || !payload.url) {
-        setError(payload.error ?? "Portal failed.");
-        return;
-      }
-
-      window.location.href = payload.url;
-    } finally {
-      setIsBillingActionRunning(false);
-    }
-  }
-
   function handleSelectFiles(fileList: FileList | null) {
     resetMessages();
     if (!fileList || fileList.length === 0) {
@@ -460,7 +421,7 @@ export function InvoiceMvp({
       setError("Set .env first");
       return;
     }
-    if (billingConfigured && !hasActivePlan) {
+    if (billingConfigured && !hasActivePlan && freeRemaining <= 0) {
       setError("Subscription required");
       return;
     }
@@ -712,36 +673,23 @@ export function InvoiceMvp({
               >
                 Help
               </button>
+              {user ? (
+                <Link
+                  href="/settings"
+                  className="rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                >
+                  Settings
+                </Link>
+              ) : null}
               {user && billingConfigured ? (
-                hasActivePlan ? (
-                  <button
-                    type="button"
-                    onClick={() => void openBillingPortal()}
-                    disabled={isBillingActionRunning}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-60"
-                  >
-                    Billing
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => void startCheckout("monthly")}
-                      disabled={isBillingActionRunning}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold disabled:opacity-60"
-                    >
-                      $29/mo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void startCheckout("yearly")}
-                      disabled={isBillingActionRunning}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold disabled:opacity-60"
-                    >
-                      Yearly -20%
-                    </button>
-                  </div>
-                )
+                <Link
+                  href="/pricing"
+                  className="group relative overflow-hidden rounded-full border border-cyan-200 bg-gradient-to-r from-sky-50 via-cyan-50 to-blue-50 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:scale-[1.02] hover:shadow-md"
+                >
+                  <span className="absolute right-2 top-1 h-1.5 w-1.5 rounded-full bg-cyan-400 opacity-80 transition group-hover:animate-ping" />
+                  <span className="absolute right-4 bottom-1.5 h-1 w-1 rounded-full bg-blue-500 opacity-70 transition group-hover:animate-pulse" />
+                  {hasActivePlan ? "Plan" : "Upgrade"}
+                </Link>
               ) : null}
               {user ? (
                 <button
@@ -772,8 +720,28 @@ export function InvoiceMvp({
             >
               {hasActivePlan
                 ? "Plan active: 100 included / month, $0.40 overage."
-                : "No active plan. Subscribe to process invoices."}
-              {!billing.early_bird_applied ? " First 10 users get 50% off." : ""}
+                : freeRemaining > 0
+                  ? `No active plan. Free trial left: ${freeRemaining}/${FREE_EXTRACTIONS_WITHOUT_PLAN}.`
+                  : "No active plan. Subscribe to process invoices."}
+            </p>
+          ) : null}
+
+          {billingConfigured && billing.early_bird_applied ? (
+            <p className="mt-2 rounded-lg bg-cyan-50 px-3 py-2 text-xs text-cyan-900">
+              Early Bird active: lifetime 50% off is locked on your account.
+            </p>
+          ) : null}
+
+          {showEarlyBirdAvailable ? (
+            <p className="mt-2 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-900">
+              Early Bird open: first 10 users get lifetime 50% off
+              {earlyBirdSlotsLeft !== null ? ` (${earlyBirdSlotsLeft} slots left)` : ""}.
+            </p>
+          ) : null}
+
+          {billingConfigured && hasActivePlan ? (
+            <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              Usage this month: {usageThisMonth}/{INCLUDED_PER_MONTH}
             </p>
           ) : null}
 
@@ -825,7 +793,11 @@ export function InvoiceMvp({
                 handleSelectFiles(event.target.files);
                 event.currentTarget.value = "";
               }}
-              disabled={!supabaseConfigured || !user || (billingConfigured && !hasActivePlan)}
+              disabled={
+                !supabaseConfigured ||
+                !user ||
+                (billingConfigured && !hasActivePlan && freeRemaining <= 0)
+              }
               className="hidden"
             />
           </div>

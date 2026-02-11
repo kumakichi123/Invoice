@@ -18,6 +18,7 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const isLogin = mode === "login";
 
@@ -68,13 +69,58 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
     }
   }
 
+  async function handleGoogleAuth() {
+    setMessage(null);
+
+    if (!supabase) {
+      setMessage("Set .env first");
+      return;
+    }
+
+    setIsGoogleLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+          queryParams: {
+            access_type: "offline",
+            prompt: "consent",
+          },
+        },
+      });
+
+      if (error) {
+        setMessage("Google login failed");
+      }
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  }
+
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-8">
       <section className="card card-strong w-full max-w-md p-6 md:p-7">
         <p className="mono text-xs tracking-[0.2em] text-slate-600">INVOICEJP</p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-900">{isLogin ? "Login" : "Create account"}</h1>
 
-        <form className="mt-5 space-y-3" onSubmit={handleSubmit}>
+        <button
+          type="button"
+          onClick={() => void handleGoogleAuth()}
+          disabled={isGoogleLoading || isLoading}
+          className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:opacity-50"
+        >
+          <span>G</span>
+          <span>{isGoogleLoading ? "Please wait..." : "Continue with Google"}</span>
+        </button>
+
+        <div className="mt-4 flex items-center gap-2 text-xs text-slate-500">
+          <div className="h-px flex-1 bg-slate-200" />
+          <span>or</span>
+          <div className="h-px flex-1 bg-slate-200" />
+        </div>
+
+        <form className="mt-4 space-y-3" onSubmit={handleSubmit}>
           <input
             type="email"
             value={email}

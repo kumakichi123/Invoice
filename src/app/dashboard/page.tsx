@@ -2,6 +2,7 @@ import { InvoiceMvp } from "@/components/invoice-mvp";
 import { redirect } from "next/navigation";
 import { isStripeBillingConfigured } from "@/lib/billing";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type DashboardPageProps = {
@@ -38,6 +39,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     created_at: string;
   }> = [];
   let totalExports = 0;
+  let usageThisMonth = 0;
+  let lifetimeProcessed = 0;
   let billing: {
     stripe_subscription_status: string | null;
     early_bird_applied: boolean;
@@ -45,6 +48,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     stripe_subscription_status: null,
     early_bird_applied: false,
   };
+  let earlyBirdEligible = false;
+  let earlyBirdSlotsLeft: number | null = null;
 
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const requestedPage = Number(resolvedSearchParams?.page ?? "1");
@@ -76,6 +81,23 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     initialExports = exportsData ?? [];
     totalExports = count ?? 0;
 
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+    const [{ count: monthCount }, { count: lifetimeCount }] = await Promise.all([
+      supabase
+        .from("invoice_exports")
+        .select("id", { head: true, count: "exact" })
+        .eq("user_id", user.id)
+        .gte("created_at", monthStart.toISOString()),
+      supabase
+        .from("invoice_exports")
+        .select("id", { head: true, count: "exact" })
+        .eq("user_id", user.id),
+    ]);
+    usageThisMonth = monthCount ?? 0;
+    lifetimeProcessed = lifetimeCount ?? 0;
+
     if (isStripeBillingConfigured()) {
       const { data: billingData } = await supabase
         .from("billing_customers")
@@ -87,6 +109,19 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         stripe_subscription_status: billingData?.stripe_subscription_status ?? null,
         early_bird_applied: billingData?.early_bird_applied ?? false,
       };
+
+      if (billing.early_bird_applied) {
+        earlyBirdEligible = true;
+      } else {
+        const admin = getSupabaseAdminClient();
+        const { count: appliedCount } = await admin
+          .from("billing_customers")
+          .select("user_id", { head: true, count: "exact" })
+          .eq("early_bird_applied", true);
+        const slotsLeft = Math.max(0, 10 - (appliedCount ?? 0));
+        earlyBirdSlotsLeft = slotsLeft;
+        earlyBirdEligible = slotsLeft > 0;
+      }
     }
   }
 
@@ -103,6 +138,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       totalExports={totalExports}
       billing={billing}
       billingConfigured={isStripeBillingConfigured()}
+      usageThisMonth={usageThisMonth}
+      lifetimeProcessed={lifetimeProcessed}
+      earlyBirdEligible={earlyBirdEligible}
+      earlyBirdSlotsLeft={earlyBirdSlotsLeft}
     />
   );
 }

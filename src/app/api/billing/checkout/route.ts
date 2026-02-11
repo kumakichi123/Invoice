@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import Stripe from "stripe";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getStripeServerClient } from "@/lib/stripe/server";
@@ -43,16 +44,12 @@ export async function POST(request: Request) {
       .eq("user_id", user.id)
       .maybeSingle();
 
-    let stripeCustomerId = existingBilling?.stripe_customer_id ?? null;
-    if (!stripeCustomerId) {
-      const customer = await stripe.customers.create({
-        email: user.email ?? undefined,
-        metadata: {
-          supabase_user_id: user.id,
-        },
-      });
-      stripeCustomerId = customer.id;
-    }
+    const stripeCustomerId = await getUsableCustomerId({
+      stripe,
+      currentCustomerId: existingBilling?.stripe_customer_id ?? null,
+      userId: user.id,
+      email: user.email ?? null,
+    });
 
     let applyEarlyBird = false;
     if (earlyBirdCouponId && !existingBilling?.early_bird_applied) {
@@ -64,13 +61,16 @@ export async function POST(request: Request) {
       applyEarlyBird = (count ?? 0) < EARLY_BIRD_LIMIT;
     }
 
-    await admin.from("billing_customers").upsert(
+    const { error: upsertError } = await admin.from("billing_customers").upsert(
       {
         user_id: user.id,
         stripe_customer_id: stripeCustomerId,
       },
       { onConflict: "user_id" },
     );
+    if (upsertError) {
+      return NextResponse.json({ error: `Billing profile update failed: ${upsertError.message}` }, { status: 500 });
+    }
 
     const origin =
       process.env.NEXT_PUBLIC_APP_URL ??
@@ -102,6 +102,50 @@ export async function POST(request: Request) {
     return NextResponse.json({ url: session.url });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected server error.";
+    console.error(`[billing/checkout] ${message}`);
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+async function getUsableCustomerId(input: {
+  stripe: Stripe;
+  currentCustomerId: string | null;
+  userId: string;
+  email: string | null;
+}) {
+  if (input.currentCustomerId) {
+    try {
+      const customer = await input.stripe.customers.retrieve(input.currentCustomerId);
+      if (typeof customer === "object" && "deleted" in customer && customer.deleted) {
+        throw new Error("Stripe customer is deleted.");
+      }
+      return input.currentCustomerId;
+    } catch (error) {
+      if (!isNoSuchCustomerError(error)) {
+        throw error;
+      }
+      console.warn(
+        `[billing/checkout] stale stripe customer user=${input.userId} customer=${input.currentCustomerId}`,
+      );
+    }
+  }
+
+  const customer = await input.stripe.customers.create({
+    email: input.email ?? undefined,
+    metadata: {
+      supabase_user_id: input.userId,
+    },
+  });
+  return customer.id;
+}
+
+function isNoSuchCustomerError(error: unknown): boolean {
+  if (!(error instanceof Stripe.errors.StripeError)) {
+    return false;
+  }
+  if (error.type === "StripeInvalidRequestError" && error.code === "resource_missing") {
+    return true;
+  }
+  const message = error.message?.toLowerCase() ?? "";
+  return message.includes("no such customer");
 }

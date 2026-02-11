@@ -15,6 +15,7 @@ export const runtime = "nodejs";
 const DIFY_MAX_RETRIES = 2;
 const DIFY_STREAM_TIMEOUT_MS = 240_000;
 const DIFY_TOTAL_BUDGET_MS = 320_000;
+const FREE_EXTRACTIONS_WITHOUT_PLAN = 5;
 
 type DifyUploadResponse = {
   id?: string;
@@ -57,10 +58,21 @@ export async function POST(request: Request) {
       }
 
       if (!isActiveBillingStatus(billingProfile?.stripe_subscription_status)) {
-        return NextResponse.json(
-          { error: "Subscription required. Start a plan from Billing." },
-          { status: 402 },
-        );
+        const { count: processedCount, error: countError } = await supabase
+          .from("invoice_exports")
+          .select("id", { head: true, count: "exact" })
+          .eq("user_id", user.id);
+
+        if (countError) {
+          return NextResponse.json({ error: "Usage lookup failed." }, { status: 500 });
+        }
+
+        if ((processedCount ?? 0) >= FREE_EXTRACTIONS_WITHOUT_PLAN) {
+          return NextResponse.json(
+            { error: "Subscription required. Start a plan from Billing." },
+            { status: 402 },
+          );
+        }
       }
 
       stripeCustomerIdForUsage = billingProfile?.stripe_customer_id ?? null;
