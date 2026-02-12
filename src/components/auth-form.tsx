@@ -94,15 +94,30 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
 
     setIsResetLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (error) {
-        setMessage("Failed to send reset email");
+      const redirectCandidates = buildResetRedirectCandidates();
+      const errorMessages: string[] = [];
+
+      for (const redirectTo of redirectCandidates) {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+        if (!error) {
+          setMessage("Password reset email sent");
+          setShowResetPassword(false);
+          return;
+        }
+        errorMessages.push(`${redirectTo}: ${error.message}`);
+      }
+
+      // Final fallback: send without redirectTo so Supabase uses Site URL.
+      const { error: fallbackError } = await supabase.auth.resetPasswordForEmail(email);
+      if (!fallbackError) {
+        setMessage("Password reset email sent");
+        setShowResetPassword(false);
         return;
       }
-      setMessage("Password reset email sent");
-      setShowResetPassword(false);
+
+      errorMessages.push(`site_url_fallback: ${fallbackError.message}`);
+      console.error("[auth] reset password failed", errorMessages);
+      setMessage(buildResetFailureMessage(errorMessages));
     } finally {
       setIsResetLoading(false);
     }
@@ -261,6 +276,31 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
       </section>
     </main>
   );
+}
+
+function buildResetRedirectCandidates(): string[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const path = "/reset-password";
+  const currentOrigin = window.location.origin.replace(/\/$/, "");
+  const configuredAppUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim().replace(/\/$/, "");
+
+  const candidates = [`${currentOrigin}${path}`];
+  if (configuredAppUrl) {
+    candidates.push(`${configuredAppUrl}${path}`);
+  }
+
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+function buildResetFailureMessage(errors: string[]): string {
+  const joined = errors.join(" | ").toLowerCase();
+  if (joined.includes("redirect") || joined.includes("invalid") || joined.includes("not allowed")) {
+    return "Failed to send reset email. Check Supabase Auth Redirect URLs for /reset-password.";
+  }
+  return "Failed to send reset email. Check Supabase email/auth settings and try again.";
 }
 
 function GoogleIcon() {
