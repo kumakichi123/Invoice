@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type AuthFormProps = {
@@ -10,6 +11,7 @@ type AuthFormProps = {
 };
 
 export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
+  const searchParams = useSearchParams();
   const supabase = useMemo(
     () => (supabaseConfigured ? getSupabaseBrowserClient() : null),
     [supabaseConfigured],
@@ -24,6 +26,20 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
   const [isResetLoading, setIsResetLoading] = useState(false);
 
   const isLogin = mode === "login";
+
+  useEffect(() => {
+    if (!isLogin) {
+      return;
+    }
+
+    const error = searchParams.get("error");
+    if (!error) {
+      return;
+    }
+
+    const reason = searchParams.get("reason");
+    setMessage(mapLoginError(error, reason));
+  }, [isLogin, searchParams]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -95,7 +111,7 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
     setIsResetLoading(true);
     try {
       const redirectCandidates = buildResetRedirectCandidates();
-      const errorMessages: string[] = [];
+      const attemptErrors: ResetAttemptError[] = [];
 
       for (const redirectTo of redirectCandidates) {
         const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
@@ -104,7 +120,12 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
           setShowResetPassword(false);
           return;
         }
-        errorMessages.push(`${redirectTo}: ${error.message}`);
+        attemptErrors.push({
+          source: redirectTo,
+          message: error.message || "Unknown error",
+          status: error.status,
+          code: error.code,
+        });
       }
 
       // Final fallback: send without redirectTo so Supabase uses Site URL.
@@ -115,9 +136,14 @@ export function AuthForm({ mode, supabaseConfigured }: AuthFormProps) {
         return;
       }
 
-      errorMessages.push(`site_url_fallback: ${fallbackError.message}`);
-      console.error("[auth] reset password failed", errorMessages);
-      setMessage(buildResetFailureMessage(errorMessages));
+      attemptErrors.push({
+        source: "site_url_fallback",
+        message: fallbackError.message || "Unknown error",
+        status: fallbackError.status,
+        code: fallbackError.code,
+      });
+      console.error("[auth] reset password failed", attemptErrors);
+      setMessage(buildResetFailureMessage(attemptErrors));
     } finally {
       setIsResetLoading(false);
     }
@@ -295,12 +321,49 @@ function buildResetRedirectCandidates(): string[] {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-function buildResetFailureMessage(errors: string[]): string {
-  const joined = errors.join(" | ").toLowerCase();
-  if (joined.includes("redirect") || joined.includes("invalid") || joined.includes("not allowed")) {
-    return "Failed to send reset email. Check Supabase Auth Redirect URLs for /reset-password.";
+type ResetAttemptError = {
+  source: string;
+  message: string;
+  status?: number;
+  code?: string;
+};
+
+function buildResetFailureMessage(errors: ResetAttemptError[]): string {
+  const joined = errors
+    .map((item) => `${item.source}: ${item.message}`)
+    .join(" | ")
+    .toLowerCase();
+  const firstReason = errors[0]?.message ? ` (reason: ${errors[0].message.slice(0, 140)})` : "";
+
+  // Keep this narrow to avoid false positives from generic words like "invalid".
+  const looksLikeRedirectConfigError =
+    joined.includes("redirect url") ||
+    joined.includes("redirect_to") ||
+    joined.includes("redirectto") ||
+    joined.includes("not allowed redirect") ||
+    joined.includes("allowed redirect urls");
+
+  if (looksLikeRedirectConfigError) {
+    return `Failed to send reset email. Check Supabase Auth Redirect URLs for /reset-password.${firstReason}`;
   }
-  return "Failed to send reset email. Check Supabase email/auth settings and try again.";
+  return `Failed to send reset email. Check Supabase email/auth settings and try again.${firstReason}`;
+}
+
+function mapLoginError(error: string, reason: string | null): string {
+  if (error === "missing_code") {
+    return "OAuth callback is missing the authorization code.";
+  }
+
+  if (error === "oauth_provider_error") {
+    return reason ? `OAuth provider returned an error: ${reason}` : "OAuth provider returned an error.";
+  }
+
+  if (error === "oauth_callback_failed") {
+    const suffix = reason ? ` (reason: ${reason})` : "";
+    return `Google login failed while creating session.${suffix}`;
+  }
+
+  return reason ? `Login failed: ${reason}` : "Login failed.";
 }
 
 function GoogleIcon() {
